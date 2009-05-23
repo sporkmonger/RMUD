@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.5"?>
+<plugin>
+
+   <extension
+         id="application"
+         point="org.eclipse.core.runtime.applications">
+      <application>
+         <run
+               class="com.sporkmonger.rmud.rcp.Application">
+         </run>
+      </application>
+   </extension>
+   <extension
+         point="org.eclipse.ui.perspectives">
+      <perspective
+            name="Telnet"
+            class="com.sporkmonger.rmud.rcp.TelnetPerspective"
+            id="com.sporkmonger.rmud.telnet.perspective">
+      </perspective>
+   </extension>
+   <extension  
+         point="org.eclipse.ui.perspectiveExtensions">  
+      <perspectiveExtension  
+            targetID="com.sporkmonger.rmud.telnet.perspective">  
+         <view  
+               id="com.sporkmonger.rmud.servers.view"  
+               minimized="false"  
+               ratio="0.25"  
+               relationship="left"  
+               relative="org.eclipse.ui.editorss">  
+         </view>
+         <viewShortcut id="com.sporkmonger.rmud.servers.view" />
+         <viewShortcut id="org.eclipse.ui.views.ProgressView" />
+         <viewShortcut id="org.eclipse.ui.console.ConsoleView" />
+      </perspectiveExtension>
+   </extension>
+   <extension
+         point="org.eclipse.ui.views">
+      <view
+            name="Progress"
+	        icon="icons/eview16/pview.gif"
+            category="org.eclipse.ui"
+            class="org.eclipse.ui.ExtensionFactory:progressView"  
+            id="org.eclipse.ui.views.ProgressView">
+      </view>
+      <view
+            allowMultiple="false"
+            class="com.sporkmonger.rmud.rcp.ServersView"
+            fastViewWidthRatio="0.25"
+            id="com.sporkmonger.rmud.servers.view"
+            name="Connections"
+            icon="icons/clcl16/connect_co.gif"
+            restorable="true">
+      </view>
+   </extension>
+   <extension
+         id="product"
+         point="org.eclipse.core.runtime.products">
+      <product
+            application="com.sporkmonger.rmud.application"
+            name="RMUD">
+         <property
+               name="appName"
+               value="RMUD">
+         </property>
+         <property
+               name="aboutImage"
+               value="icons/RMUD.png">
+         </property>
+         <property
+               name="aboutText"
+               value="RMUD is a powerful MUD client that uses Ruby for its scripting capabilities.">
+         </property>
+         <property
+               name="windowImages"
+               value="icons/RMUD.png">
+         </property>
+      </product>
+   </extension>
+   <extension
+         point="org.eclipse.ui.editors">
+      <editor
+            class="com.sporkmonger.rmud.rcp.MUDEditor"
+            default="true"
+            id="com.sporkmonger.rmud.mud.editor"
+            name="MUD">
+      </editor>
+   </extension>
+
+</plugin>
