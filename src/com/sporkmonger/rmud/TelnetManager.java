@@ -49,12 +49,10 @@ public class TelnetManager {
 					buffer = new StringBuilder();
 					while(true) {
 						if (connection == null || connection.isClosed()) {
-							System.out.println("Connection closed, killing worker thread.");
 							break;
 						}
 						int result = inputStream.read();
 						if (result == -1) {
-							System.out.println("Stream broken, killing worker thread.");
 							break;
 						}
 						byte currentChar = (byte)result;
@@ -79,6 +77,7 @@ public class TelnetManager {
 							break;
 						case GA:
 							if (state == STATE_IAC) {
+								pushChar((byte)10);
 								flushBuffer();
 								state = STATE_DATA;
 							} else {
@@ -113,6 +112,7 @@ public class TelnetManager {
 							break;
 						}
 					}
+					close();
 				} catch (IOException e) {
 				}
 			}

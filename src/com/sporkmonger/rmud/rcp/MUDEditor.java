@@ -14,6 +14,8 @@ import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
 import org.eclipse.swt.custom.StyledText;
+import org.eclipse.swt.events.KeyEvent;
+import org.eclipse.swt.events.KeyListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.widgets.Composite;
@@ -35,24 +37,30 @@ import com.sporkmonger.rmud.Script;
 import com.sporkmonger.rmud.Server;
 import com.sporkmonger.rmud.TelnetEvent;
 import com.sporkmonger.rmud.TelnetManager;
-import com.sporkmonger.rmud.swt.custom.ANSILineStyler;
+import com.sporkmonger.rmud.swt.custom.ANSIStyledContent;
 
-public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnetBridge {
+public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnetBridge, KeyListener {
 	public static final String ID = "com.sporkmonger.rmud.mud.editor";
 
 	private Server server;
 	private Connection connection = null;
 	private TelnetManager telnetManager = null;
 	private MessageConsole messageConsole = null;
+	private MessageConsole networkConsole = null;
 	private MessageConsoleStream consoleOutputStream = null;
 	private MessageConsoleStream consoleErrorStream = null;
+	private MessageConsoleStream consoleRemoteNetworkStream = null;
+	private MessageConsoleStream consoleLocalNetworkStream = null;
 	private Script script = null;
 	private StyledText ansiText = null;
+	private Text commandInputField = null;
 	private Color foreground = null;
 	private Color background = null;
 	private Font font = null;
-	private ANSILineStyler ansiLineStyler = null;
+	private ANSIStyledContent ansiStyledContent = null;
 	private ArrayList<ITelnetListener> telnetListeners = new ArrayList<ITelnetListener>();
+	private int commandIndex = 0;
+	private ArrayList<String> commandHistory = new ArrayList<String>();
 	
 	@Override
 	public void doSave(IProgressMonitor monitor) {
@@ -76,11 +84,18 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		this.connection = new Connection(this.server);
 		
 		this.messageConsole = new MessageConsole(server.getName() + " Console", null);
+		this.networkConsole = new MessageConsole(server.getName() + " Network", null);
+		
 		this.consoleOutputStream = this.messageConsole.newMessageStream();
 		this.consoleErrorStream = this.messageConsole.newMessageStream();
 		this.consoleErrorStream.setColor(getEditorSite().getShell().getDisplay().getSystemColor(SWT.COLOR_RED));
+		
+		this.consoleRemoteNetworkStream = this.networkConsole.newMessageStream();
+		this.consoleLocalNetworkStream = this.networkConsole.newMessageStream();
+		this.consoleLocalNetworkStream.setColor(getEditorSite().getShell().getDisplay().getSystemColor(SWT.COLOR_BLUE));
+		
 		ConsolePlugin.getDefault().getConsoleManager().addConsoles(
-			new IConsole[] { this.messageConsole }
+			new IConsole[] { this.networkConsole, this.messageConsole }
 		);
 
 		Job job = new Job("Connecting to " + server.getHost() + ":" + server.getPort()) {
@@ -130,7 +145,7 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 	}
 
 	@Override
-	public void createPartControl(Composite parent) {
+	public void createPartControl(final Composite parent) {
 		if (foreground == null) {
 			foreground = new Color(parent.getDisplay(), 255, 255, 255);
 		}
@@ -143,18 +158,22 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		
 		SashForm sashForm = new SashForm(parent, SWT.VERTICAL);
 		ansiText = new StyledText(sashForm, SWT.LEFT | SWT.MULTI | SWT.V_SCROLL);
-		ansiLineStyler = new ANSILineStyler(ansiText);
+		
+		ansiStyledContent = new ANSIStyledContent(parent.getDisplay());
 		ansiText.setBackground(background);
 		ansiText.setForeground(foreground);
 		ansiText.setFont(font);
 		ansiText.setEditable(false);
-		ansiText.addLineStyleListener(ansiLineStyler);
-		ansiText.addVerifyListener(ansiLineStyler);
+		ansiText.setContent(ansiStyledContent);
+		ansiText.addLineStyleListener(ansiStyledContent);
+		ansiText.setMargins(8, 8, 8, 8);
 
-		Text commandInputField = new Text(sashForm, SWT.LEFT);
+		commandInputField = new Text(sashForm, SWT.LEFT);
 		commandInputField.setBackground(background);
 		commandInputField.setForeground(foreground);
 		commandInputField.setText("");
+		commandInputField.addKeyListener(this);
+		
 		sashForm.setWeights(new int[]{23, 1});
 	}
 
@@ -170,8 +189,8 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		if (background != null) {
 			background.dispose();
 		}
-		if (ansiLineStyler != null) {
-			ansiLineStyler.dispose();
+		if (ansiStyledContent != null) {
+			ansiStyledContent.dispose();
 		}
 		if (telnetManager != null) {
 			try {
@@ -181,7 +200,7 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		}
 		if (messageConsole != null) {
 			ConsolePlugin.getDefault().getConsoleManager().removeConsoles(			
-				new IConsole[] { this.messageConsole }
+				new IConsole[] { this.networkConsole, this.messageConsole }
 			);
 		}
 		super.dispose();
@@ -264,7 +283,11 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		getEditorSite().getShell().getDisplay().syncExec(new Runnable() {
 			public void run() {
 				if (!ansiText.isDisposed()) {
-					ansiText.append(data);
+					ansiStyledContent.appendANSIText(data);
+					// Don't scroll if we're looking at something else
+					if (Math.abs(ansiText.getTopIndex() - ansiStyledContent.getLineCount()) < 100) {
+						ansiText.setTopPixel(Integer.MAX_VALUE);
+					}
 				}
 			}
 		});
@@ -272,10 +295,22 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 
 	@Override
 	public void sendToRemote(String data) {
+		boolean disconnected = false;
 		try {
-			connection.getSocket().getOutputStream().write(data.getBytes());
+			if (connection.getSocket().isConnected()) {
+				connection.getSocket().getOutputStream().write(data.getBytes());
+			} else {
+				disconnected = true;
+			}
 		} catch (IOException e) {
-			e.printStackTrace();
+			disconnected = true;
+		}
+		if (disconnected) {
+			getEditorSite().getShell().getDisplay().syncExec(new Runnable() {
+				public void run() {
+					getEditorSite().getActionBars().getStatusLineManager().setMessage("Disconnected.");
+				}
+			});
 		}
 	}
 
@@ -285,6 +320,16 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		for (ITelnetListener listener : telnetListeners) {
 			listener.readFromLocal(event);
 		}
+		getEditorSite().getShell().getDisplay().syncExec(new Runnable() {
+			public void run() {
+				if (!ansiText.isDisposed()) {
+					// Don't scroll if we're looking at something else
+					if (Math.abs(ansiText.getTopIndex() - ansiStyledContent.getLineCount()) < 100) {
+						ansiText.setTopPixel(Integer.MAX_VALUE);
+					}
+				}
+			}
+		});
 	}
 
 	@Override
@@ -293,6 +338,16 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		for (ITelnetListener listener : telnetListeners) {
 			listener.readFromRemote(event);
 		}
+		getEditorSite().getShell().getDisplay().syncExec(new Runnable() {
+			public void run() {
+				if (!ansiText.isDisposed()) {
+					// Don't scroll if we're looking at something else
+					if (Math.abs(ansiText.getTopIndex() - ansiStyledContent.getLineCount()) < 100) {
+						ansiText.setTopPixel(Integer.MAX_VALUE);
+					}
+				}
+			}
+		});
 	}
 
 	@Override
@@ -312,5 +367,53 @@ public class MUDEditor extends EditorPart implements IJobChangeListener, ITelnet
 		} else {
 			return null;
 		}
+	}
+
+	@Override
+	public OutputStream getConsoleRemoteNetworkStream() {
+		if (this.consoleRemoteNetworkStream != null) {
+			return this.consoleRemoteNetworkStream;
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public OutputStream getConsoleLocalNetworkStream() {
+		if (this.consoleLocalNetworkStream != null) {
+			return this.consoleLocalNetworkStream;
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public void keyPressed(KeyEvent e) {
+		if (e.keyCode == SWT.ARROW_UP) {
+			commandIndex -= 1;
+			if (commandIndex < 0) {
+				commandIndex = 0;
+			}
+			commandInputField.setText(commandHistory.get(commandIndex));
+		} else if (e.keyCode == SWT.ARROW_DOWN) {
+			commandIndex += 1;
+			if (commandIndex >= commandHistory.size()) {
+				commandIndex = commandHistory.size();
+				commandInputField.setText("");
+			} else {
+				commandInputField.setText(commandHistory.get(commandIndex));
+			}
+		} else if (e.keyCode == 10 || e.keyCode == 13) {
+			String command = commandInputField.getText();
+			ansiStyledContent.appendANSIText("\u001b[4m" + command + "\u001b[24m\n");
+			commandInputField.setText("");
+			commandHistory.add(command);
+			commandIndex += 1;
+			receivedFromLocal(command.replaceAll("[\\r\\n]+", "") + "\n");
+		}
+	}
+
+	@Override
+	public void keyReleased(KeyEvent e) {
 	}
 }

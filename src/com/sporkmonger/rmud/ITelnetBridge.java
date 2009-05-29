@@ -12,4 +12,6 @@ public interface ITelnetBridge {
 
 	public OutputStream getConsoleOutputStream();
 	public OutputStream getConsoleErrorStream();
+	public OutputStream getConsoleRemoteNetworkStream();
+	public OutputStream getConsoleLocalNetworkStream();
 }

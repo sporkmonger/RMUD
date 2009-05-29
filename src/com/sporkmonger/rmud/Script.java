@@ -44,21 +44,7 @@ public class Script implements ITelnetListener {
 		Script scriptForHost = new Script(bridge);
 		scriptForHost.setHost(host);
 		scriptForHost.setScriptFile(scriptFile);
-		if (scriptFile.exists()) {
-			StringBuilder body = new StringBuilder();
-			BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(scriptFile)));
-			String line = null;
-			while ((line = reader.readLine()) != null) {
-				body.append(line + "\n");
-			}
-			scriptForHost.setScriptBody(body.toString());
-		} else {
-			scriptForHost.setScriptBody("");
-			try {
-				scriptFile.createNewFile();
-			} catch (IOException e) {
-			}
-		}
+		scriptForHost.loadScriptBody();
 		if (preface == null) {
 			InputStream prefaceStream = Settings.getPrefaceURL().openStream();
 			if (prefaceStream == null) {
@@ -99,9 +85,46 @@ public class Script implements ITelnetListener {
 	public String getScriptBody() {
 		return scriptBody;
 	}
-	
+
+	public void loadScriptBody() throws IOException {
+		if (scriptFile == null) {
+			throw new RuntimeException("Script file object has not been set.");
+		}
+		if (scriptFile.exists()) {
+			StringBuilder body = new StringBuilder();
+			BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(scriptFile)));
+			String line = null;
+			while ((line = reader.readLine()) != null) {
+				body.append(line + "\n");
+			}
+			setScriptBody(body.toString());
+		} else {
+			setScriptBody("");
+			try {
+				scriptFile.createNewFile();
+			} catch (IOException e) {
+			}
+		}
+	}
+
 	public ITelnetBridge getBridge() {
 		return bridge;
+	}
+
+	public PrintStream getRemoteNetworkStream() {
+		return new PrintStream(getBridge().getConsoleRemoteNetworkStream());
+	}
+
+	public PrintStream getLocalNetworkStream() {
+		return new PrintStream(getBridge().getConsoleLocalNetworkStream());
+	}
+
+	public void reload() throws Throwable {
+		if (runtime != null) {
+			runtime = null;
+			loadScriptBody();
+			initializeRuntime();
+		}
 	}
 	
 	protected void initializeRuntime() throws Throwable {

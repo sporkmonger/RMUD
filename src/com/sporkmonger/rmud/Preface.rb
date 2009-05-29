@@ -1,11 +1,11 @@
 require "java"
 require "jruby"
 
-puts $:.inspect
-
 import com.sporkmonger.rmud.Script
 
 SCRIPT = Java::ComSporkmongerRmud::Script.get_script_instance(SCRIPT_UUID)
+STD_RNET = SCRIPT.get_remote_network_stream
+STD_LNET = SCRIPT.get_local_network_stream
 
 require "date"
 require "time"
@@ -14,7 +14,6 @@ require "sync"
 SYNC = Sync.new
 TRIGGERS = []
 COMMANDS = []
-ALIASES = []
 TIMERS = []
 TIMER_THREAD = Thread.new do
   loop do
@@ -48,11 +47,26 @@ class IOProcessor
   end
 
   def self.process_from_local(data)
-    self.send_to_remote(data)
+    buffer = data.dup
+    for command in COMMANDS
+      pattern, options, block = command
+      captures = buffer.scan(pattern)
+      if captures.first != nil
+        result = block.call(captures)
+        if options[:replace]
+          buffer.gsub!(pattern, result)
+        end
+      end
+    end
+    unless data.strip != "" && buffer.strip == ""
+      STD_LNET.println(buffer.inspect[1...-1])
+      self.send_to_remote(buffer)
+    end
   end
 
   def self.process_from_remote(data)
-    buffer = data
+    STD_RNET.println(data.inspect[1...-1])
+    buffer = data.dup
     for trigger in TRIGGERS
       pattern, options, block = trigger
       if options[:ansi] == nil
@@ -119,7 +133,35 @@ def display(data)
 end
 
 def trigger(pattern, options={}, &block)
+  if block == nil
+    raise ArgumentError, "Cannot create a trigger without a block."
+  end
   TRIGGERS << [pattern, options, block]
+end
+
+def delete_trigger(name)
+  TRIGGERS.delete_if do |(pattern, options, block)|
+    options[:name] == name
+  end
+end
+
+def substitute(pattern, replacement)
+  block = lambda { |captures| replacement }
+  TRIGGERS << [pattern, {:replace => true}, block]
+end
+
+def input(pattern, options={}, &block)
+  COMMANDS << [pattern, options, block]
+end
+
+def command(pattern, options={}, &block)
+  new_block = lambda { |captures| block.call(captures); "" }
+  COMMANDS << [pattern, options.merge(:replace => true), new_block]
+end
+
+def alias_command(pattern, replacement)
+  block = lambda { |captures| replacement }
+  COMMANDS << [pattern, {:replace => true}, block]
 end
 
 def timer(frequency, options={}, &block)
@@ -135,3 +177,13 @@ end
 def dice(sides=6, count=1)
   (1..count).inject(0) { |sum, _| sum += (rand(sides) + 1) }
 end
+
+command("reload") do |captures|
+  SCRIPT.reload
+end
+
+command(/^eval (.*)$/) do |captures|
+  display(eval(captures.flatten.first).inspect + "\n")
+end
+
+puts "Script loaded."
